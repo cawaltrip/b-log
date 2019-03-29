@@ -50,7 +50,8 @@ readonly LOG_LEVEL_ALL=-1       # all enabled
 # 5: log message
 # 6: space
 # 7: filename
-B_LOG_DEFAULT_TEMPLATE="[@23:1@][@6:2@][@3@:@3:4@] @5@"  # default template
+B_LOG_DEFAULT_TEMPLATE="[@23:1@][@2@][@7@:@3@:@4@] @5@"  # default template
+B_LOG_STDOUT_TEMPLATE="[@2@][@7@:@3@:@4@] @5@"
 
 # log levels information
 # level code, level name, level template, prefix(colors etc.), suffix(colors etc.)
@@ -63,6 +64,15 @@ LOG_LEVELS=(
     "${LOG_LEVEL_DEBUG}"  "DEBUG"  "${B_LOG_DEFAULT_TEMPLATE}" "\e[1;34m" "\e[0m"
     "${LOG_LEVEL_TRACE}"  "TRACE"  "${B_LOG_DEFAULT_TEMPLATE}" "\e[94m" "\e[0m"
 )
+STDOUT_LOG_LEVELS=(
+    "${LOG_LEVEL_FATAL}"  "FATAL"  "${B_LOG_STDOUT_TEMPLATE}" "\e[41;37m" "\e[0m"
+    "${LOG_LEVEL_ERROR}"  "ERROR"  "${B_LOG_STDOUT_TEMPLATE}" "\e[1;31m" "\e[0m"
+    "${LOG_LEVEL_WARN}"   "WARN"   "${B_LOG_STDOUT_TEMPLATE}" "\e[1;33m" "\e[0m"
+    "${LOG_LEVEL_NOTICE}" "NOTICE" "${B_LOG_STDOUT_TEMPLATE}" "\e[1;32m" "\e[0m"
+    "${LOG_LEVEL_INFO}"   "INFO"   "${B_LOG_STDOUT_TEMPLATE}" "\e[37m" "\e[0m"
+    "${LOG_LEVEL_DEBUG}"  "DEBUG"  "${B_LOG_STDOUT_TEMPLATE}" "\e[1;34m" "\e[0m"
+    "${LOG_LEVEL_TRACE}"  "TRACE"  "${B_LOG_STDOUT_TEMPLATE}" "\e[94m" "\e[0m"
+)
 # log levels columns
 readonly LOG_LEVELS_LEVEL=0
 readonly LOG_LEVELS_NAME=1
@@ -71,6 +81,7 @@ readonly LOG_LEVELS_PREFIX=3
 readonly LOG_LEVELS_SUFFIX=4
 
 LOG_LEVEL=${LOG_LEVEL_WARN}     # current log level
+STDOUT_LOG_LEVEL=${LOG_LEVEL}   # stdout log level
 B_LOG_LOG_VIA_STDOUT=true       # log via stdout
 B_LOG_LOG_VIA_FILE=""           # file if logging via file (file, add suffix, add prefix)
 B_LOG_LOG_VIA_FILE_PREFIX=false # add prefix to log file
@@ -114,6 +125,7 @@ function B_LOG(){
         echo "  -s, --syslog            'switches you want to use'. None set means disabled"
         echo "                          results in: \"logger 'switches' log-message\""
         echo "  -l, --log-level         The log level"
+        echo "  -L, --stdout-log-level  The log level for stdout specifically"
         echo "                          Log levels       : value"
         echo "                          ---------------- : -----"
         echo "                          LOG_LEVEL_OFF    : ${LOG_LEVEL_OFF}"
@@ -132,6 +144,7 @@ function B_LOG(){
             "--help") set -- "$@" "-h" ;;
             "--version") set -- "$@" "-V" ;;
             "--log-level") set -- "$@" "-l" ;;
+            "--stdout-log-level") set -- "$@" "-L" ;;
             "--date-format") set -- "$@" "-d" ;;
             "--stdout") set -- "$@" "-o" ;;
             "--file") set -- "$@" "-f" ;;
@@ -144,7 +157,7 @@ function B_LOG(){
       esac
     done
     # get options
-    while getopts "hVd:o:f:s:l:a:" optname
+    while getopts "hVd:o:f:s:l:L:a:" optname
     do
         case "$optname" in
             "h")
@@ -190,6 +203,9 @@ function B_LOG(){
             "l")
                 LOG_LEVEL=${OPTARG}
                 ;;
+            "L")
+                STDOUT_LOG_LEVEL=${OPTARG}
+                ;;
             *)
                 B_LOG_ERR '1' "unknown error while processing B_LOG option."
             ;;
@@ -201,21 +217,33 @@ function B_LOG(){
 function B_LOG_get_log_level_info() {
     # @description get the log level information
     # @param $1 log type
+    # @param $2 name of log level array to use (optional)
     # @return returns information in the variables
     # - log level name
     # - log level template
     # ...
     local log_level=${1:-"$LOG_LEVEL_ERROR"}
+    if [[ ! -z ${2} ]]; then
+        log_level_array_name=$2[@]
+    else
+        log_level_array_name=LOG_LEVELS[@]
+    fi
+    log_level_array=("${!log_level_array_name}")
+#    echo "Array contents:"
+#    for i in ${log_level_array[@]}; do
+#        echo "value: ${i}"
+#    done
+#    echo "Array contents done."
     LOG_FORMAT=""
     LOG_PREFIX=""
     LOG_SUFFIX=""
     local i=0
-    for ((i=0; i<${#LOG_LEVELS[@]}; i+=$((LOG_LEVELS_SUFFIX+1)))); do
-        if [[ "$log_level" == "${LOG_LEVELS[i]}" ]]; then
-            B_LOG_LOG_LEVEL_NAME="${LOG_LEVELS[i+${LOG_LEVELS_NAME}]}"
-            LOG_FORMAT="${LOG_LEVELS[i+${LOG_LEVELS_TEMPLATE}]}"
-            LOG_PREFIX="${LOG_LEVELS[i+${LOG_LEVELS_PREFIX}]}"
-            LOG_SUFFIX="${LOG_LEVELS[i+${LOG_LEVELS_SUFFIX}]}"
+    for ((i=0; i<${#log_level_array[@]}; i+=$((LOG_LEVELS_SUFFIX+1)))); do
+        if [[ "$log_level" == "${log_level_array[i]}" ]]; then
+            B_LOG_LOG_LEVEL_NAME="${log_level_array[i+${LOG_LEVELS_NAME}]}"
+            LOG_FORMAT="${log_level_array[i+${LOG_LEVELS_TEMPLATE}]}"
+            LOG_PREFIX="${log_level_array[i+${LOG_LEVELS_PREFIX}]}"
+            LOG_SUFFIX="${log_level_array[i+${LOG_LEVELS_SUFFIX}]}"
             return 0
         fi
     done
@@ -303,8 +331,17 @@ function B_LOG_print_message() {
     log_level=${1:-"$LOG_LEVEL_ERROR"}
     if [ ${log_level} -gt ${LOG_LEVEL} ]; then # check log level
         if [ ! ${LOG_LEVEL} -eq ${LOG_LEVEL_ALL} ]; then # check log level
-            return 0;
+            no_log=1
         fi
+    fi
+    if [[ ${log_level} -gt ${STDOUT_LOG_LEVEL} ]]; then
+        if [[ ! ${STDOUT_LOG_LEVEL} -eq ${LOG_LEVEL_ALL} ]]; then
+            no_stdout_log=1
+        fi
+    fi
+
+    if ((no_log)) && ((no_stdout_log)); then
+        return 0
     fi
     # log level bigger as LOG_LEVEL? and level is not -1? return
 
@@ -314,14 +351,23 @@ function B_LOG_print_message() {
         message="$(cat /dev/stdin)"
     fi
     B_LOG_LOG_MESSAGE="${message}"
-    B_LOG_get_log_level_info "${log_level}" || true
-    B_LOG_convert_template ${LOG_FORMAT} || true
+    #B_LOG_get_log_level_info "${log_level}" || true
+    #B_LOG_convert_template ${STDOUT_LOG_FORMAT} || true
     # output to stdout
-    if [ "${B_LOG_LOG_VIA_STDOUT}" = true ]; then
+    if [ "${B_LOG_LOG_VIA_STDOUT}" = true ] && (( ! no_stdout_log )); then
+        B_LOG_get_log_level_info "${log_level}" "STDOUT_LOG_LEVELS" || true
+        B_LOG_convert_template "${LOG_FORMAT}" || true
         echo -ne "$LOG_PREFIX"
         echo -ne "${B_LOG_CONVERTED_TEMPLATE_STRING}"
         echo -e "$LOG_SUFFIX"
     fi
+
+    if ((no_log)); then
+        return 0
+    fi
+
+    B_LOG_get_log_level_info "${log_level}" || true
+    B_LOG_convert_template ${LOG_FORMAT} || true
     # output to file
     if [ ! -z "${B_LOG_LOG_VIA_FILE}" ]; then
         file_directory=$(dirname $B_LOG_LOG_VIA_FILE)
@@ -338,7 +384,8 @@ function B_LOG_print_message() {
                 touch "${B_LOG_LOG_VIA_FILE}" || err_ret_code=$?
                 B_LOG_ERR "${err_ret_code}" "Error while making log file: '${B_LOG_LOG_VIA_FILE}'. Are the permissions ok?"
             fi
-        else
+        fi
+        if (( ! err_ret_code )); then
             message=""
             if [ "${B_LOG_LOG_VIA_FILE_PREFIX}" = true ]; then
                 message="${message}${LOG_PREFIX}"
@@ -375,6 +422,7 @@ function B_LOG_MESSAGE() { B_LOG_print_message "$@"; }
 function FATAL()    { B_LOG_print_message ${LOG_LEVEL_FATAL} "$@"; }
 function ERROR()    { B_LOG_print_message ${LOG_LEVEL_ERROR} "$@"; }
 function WARN()     { B_LOG_print_message ${LOG_LEVEL_WARN} "$@"; }
+function WARNING()  { B_LOG_print_message ${LOG_LEVEL_WARN} "$@"; }
 function NOTICE()   { B_LOG_print_message ${LOG_LEVEL_NOTICE} "$@"; }
 function INFO()     { B_LOG_print_message ${LOG_LEVEL_INFO} "$@"; }
 function DEBUG()    { B_LOG_print_message ${LOG_LEVEL_DEBUG} "$@"; }
